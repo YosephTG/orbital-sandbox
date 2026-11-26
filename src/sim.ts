@@ -296,8 +296,60 @@ export class Sim {
     const half = dt / 2
     this.integrate(half)
     this.integrate(half)
+    this.holdCentre(dt)
     this.time += dt
     this.recordTrails()
+  }
+
+  /**
+   * Keeps the system framed on screen.
+   *
+   * Orbits are relative, so travelling along with the centre of mass changes
+   * nothing physical, but new bodies arrive carrying real momentum and bodies
+   * leaving at the rim take some away. Left alone, that shoves the sun out of
+   * the frame and every orbit follows it. Dropping the net momentum holds the
+   * view still, and any offset already accumulated eases back to the origin.
+   */
+  private holdCentre(dt: number) {
+    let mass = 0
+    let cx = 0
+    let cy = 0
+    let px = 0
+    let py = 0
+
+    for (const body of this.bodies) {
+      mass += body.m
+      cx += body.x * body.m
+      cy += body.y * body.m
+      px += body.vx * body.m
+      py += body.vy * body.m
+    }
+
+    if (mass <= 0) return
+
+    const driftX = px / mass
+    const driftY = py / mass
+    for (const body of this.bodies) {
+      body.vx -= driftX
+      body.vy -= driftY
+    }
+
+    const ease = Math.min(0.5, dt * 2)
+    const shiftX = -(cx / mass) * ease
+    const shiftY = -(cy / mass) * ease
+    if (Math.abs(shiftX) < 1e-5 && Math.abs(shiftY) < 1e-5) return
+
+    for (const body of this.bodies) {
+      body.x += shiftX
+      body.y += shiftY
+    }
+    // Trails are drawn in world space, so they have to travel with the bodies.
+    for (const trail of this.trails.values()) {
+      for (let i = 0; i < trail.length; i += 2) {
+        trail[i] += shiftX
+        trail[i + 1] += shiftY
+      }
+    }
   }
 
   private integrate(h: number) {

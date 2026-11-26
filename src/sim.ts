@@ -27,6 +27,9 @@ export const PALETTE = ['#c6ff3d', '#2de2c1', '#ff9f1c', '#f2f7e4', '#7cf7d8', '
 
 const radiusFor = (mass: number) => Math.max(0.16, 0.28 * Math.cbrt(mass))
 
+/** Ceiling on the orbital speed a new body is launched with, in units/second. */
+export const SEED_SPEED_CAP = 6.5
+
 /**
  * A tiny 2D n-body integrator. It owns its own mutable state on purpose:
  * the render loop reads it every frame, React only reads summary numbers.
@@ -57,13 +60,23 @@ export class Sim {
    * Returns null when there is genuinely no free space nearby, so a click
    * landed on top of an existing body never creates a duplicate there.
    */
-  private freeSpot(x: number, y: number, radius: number): { x: number; y: number } | null {
-    // Generous clearance: a fresh body should read as its own object, not a
-    // bump sitting on whatever it was dropped next to.
-    const clearance = (otherRadius: number) => (otherRadius + radius) * 1.6 + 0.6
+  private freeSpot(
+    x: number,
+    y: number,
+    radius: number,
+    mass: number,
+  ): { x: number; y: number } | null {
+    // Clearance has to do two jobs: keep the new body visibly its own object,
+    // and stay far enough out that a circular orbit there is not a blur.
+    const clearance = (otherRadius: number, otherMass: number) => {
+      const base = (otherRadius + radius) * 1.6 + 0.6
+      const orbitRoom =
+        (this.gravity * (mass + otherMass) * 0.81) / (SEED_SPEED_CAP * SEED_SPEED_CAP)
+      return Math.max(base, orbitRoom)
+    }
     const fits = (px: number, py: number) =>
       this.bodies.every(
-        (body) => Math.hypot(px - body.x, py - body.y) >= clearance(body.r),
+        (body) => Math.hypot(px - body.x, py - body.y) >= clearance(body.r, body.m),
       )
 
     if (fits(x, y)) return { x, y }
@@ -85,7 +98,7 @@ export class Sim {
   }
 
   spawn(x: number, y: number, mass: number) {
-    const spot = this.freeSpot(x, y, radiusFor(mass))
+    const spot = this.freeSpot(x, y, radiusFor(mass), mass)
     if (!spot) return null
 
     // Leave with a small outward push away from the closest neighbour, so the
@@ -111,8 +124,10 @@ export class Sim {
       const direction = Math.random() < 0.5 ? -1 : 1
       // Relative circular speed for this pair: the arrival swings around its
       // neighbour instead of dropping straight onto it and merging.
-      const orbitSpeed =
-        Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance) * 0.9
+      const orbitSpeed = Math.min(
+        SEED_SPEED_CAP,
+        Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance) * 0.9,
+      )
       vx = nearest.vx - dy * orbitSpeed * direction
       vy = nearest.vy + dx * orbitSpeed * direction
     }

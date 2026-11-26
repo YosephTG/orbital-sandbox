@@ -27,8 +27,15 @@ export const PALETTE = ['#c6ff3d', '#2de2c1', '#ff9f1c', '#f2f7e4', '#7cf7d8', '
 
 const radiusFor = (mass: number) => Math.max(0.16, 0.28 * Math.cbrt(mass))
 
-/** Ceiling on the orbital speed a new body is launched with, in units/second. */
+/**
+ * Speed a circular orbit is sized to reach, in units/second. Spawn clearance is
+ * placed where a circular orbit travels at about this speed, which keeps a body
+ * next to a heavy neighbour from zipping round it in a blur.
+ */
 export const SEED_SPEED_CAP = 6.5
+
+/** Softening length in the gravity solver; also shapes the circular speed. */
+const SOFTENING = 0.36
 
 /**
  * A tiny 2D n-body integrator. It owns its own mutable state on purpose:
@@ -91,13 +98,25 @@ export class Sim {
 
     if (fits(x, y)) return { x, y }
 
-    // Walk outward in rings until a clear pocket turns up next to the click.
-    for (let ring = 1; ring <= 48; ring += 1) {
-      const distance = ring * Math.max(0.6, radius * 2 + 1.2)
-      const steps = ring > 10 ? 24 : 12
+    // Start on the exact ring this click needs. Walking out in fixed hops used
+    // to overshoot: a click on the sun skipped the 6.5 clearance and landed a
+    // whole hop past it, so the body sat farther out than intended.
+    let start = 0
+    for (const body of this.bodies) {
+      const distance = Math.hypot(x - body.x, y - body.y)
+      start = Math.max(start, clearance(body.r, body.m) - distance)
+    }
 
-      for (let step = 0; step < steps; step += 1) {
-        const angle = (step / steps) * Math.PI * 2 + ring * 0.5
+    // Fine steps keep the landing on the clearance itself rather than past it.
+    const stride = Math.max(0.3, radius * 0.8)
+
+    // Walk outward in rings until a clear pocket turns up next to the click.
+    for (let ring = 0; ring <= 48; ring += 1) {
+      const distance = start + ring * stride
+      const steps = ring > 6 ? 24 : 12
+
+      for (let index = 0; index < steps; index += 1) {
+        const angle = (index / steps) * Math.PI * 2 + ring * 0.5
         let px = x + Math.cos(angle) * distance
         let py = y + Math.sin(angle) * distance
 
@@ -145,17 +164,16 @@ export class Sim {
       const dx = (spot.x - nearest.x) / nearestDistance
       const dy = (spot.y - nearest.y) / nearestDistance
       const direction = Math.random() < 0.5 ? -1 : 1
-      // Relative circular speed for this pair. The clearance above already keeps
-      // this near the cap where the frame has room; when the frame is what limits
-      // the clearance, a capped speed would be far below circular and the arrival
-      // would dive into the neighbour, so the true circular speed wins there.
-      const circular = Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance)
-      // When the frame is what cut the clearance short, a capped speed would sit
-      // far below circular and the arrival would dive in, so go nearly circular.
-      const roomWanted =
-        (this.gravity * (mass + nearest.m) * 0.81) / (SEED_SPEED_CAP * SEED_SPEED_CAP)
-      const frameLimited = nearestDistance < roomWanted - 0.05
-      const orbitSpeed = frameLimited ? circular : Math.min(SEED_SPEED_CAP, circular * 0.9)
+      // Relative circular speed for this pair, taken from the same softened
+      // force the integrator uses. A slower seed would swing out to the spawn
+      // point and back in, and the unsoftened speed would sit slightly high, so
+      // either way the arrival wobbles instead of settling at its clearance.
+      const orbitSpeed =
+        nearestDistance *
+        Math.sqrt(
+          (this.gravity * (mass + nearest.m)) /
+            Math.pow(nearestDistance * nearestDistance + SOFTENING, 1.5),
+        )
 
       // A fast-moving neighbour should not fling the arrival off screen, but the
       // clamp must never eat into the orbit speed itself.
@@ -354,7 +372,7 @@ export class Sim {
 
   private integrate(h: number) {
     const G = this.gravity
-    const softening = 0.36
+    const softening = SOFTENING
     const count = this.bodies.length
 
     for (let i = 0; i < count; i += 1) {

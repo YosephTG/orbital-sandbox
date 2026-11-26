@@ -40,6 +40,8 @@ export class Sim {
   gravity = 8
   timeScale = 1
   time = 0
+  /** World radius that is currently on screen; set by the camera rig. */
+  viewRadius = 15
   private nextId = 1
 
   private make(spec: BodySpec): Body {
@@ -66,15 +68,23 @@ export class Sim {
     radius: number,
     mass: number,
   ): { x: number; y: number } | null {
-    // Clearance has to do two jobs: keep the new body visibly its own object,
-    // and stay far enough out that a circular orbit there is not a blur.
+    const maxRadius = Math.max(4, this.viewRadius)
+    // Leave a visible margin so the body is clearly on screen, not clipped.
+    const frameEdge = maxRadius * 0.85
+
+    // Clearance has to do three jobs: keep the new body visibly its own object,
+    // stay far enough out that a circular orbit there is not a blur, and never
+    // push the spawn past the edge of the screen.
     const clearance = (otherRadius: number, otherMass: number) => {
       const base = (otherRadius + radius) * 1.6 + 0.6
       const orbitRoom =
         (this.gravity * (mass + otherMass) * 0.81) / (SEED_SPEED_CAP * SEED_SPEED_CAP)
-      return Math.max(base, orbitRoom)
+      return Math.min(maxRadius * 0.8, Math.max(base, orbitRoom))
     }
+
+    const inFrame = (px: number, py: number) => Math.hypot(px, py) <= frameEdge
     const fits = (px: number, py: number) =>
+      inFrame(px, py) &&
       this.bodies.every(
         (body) => Math.hypot(px - body.x, py - body.y) >= clearance(body.r, body.m),
       )
@@ -82,14 +92,22 @@ export class Sim {
     if (fits(x, y)) return { x, y }
 
     // Walk outward in rings until a clear pocket turns up next to the click.
-    for (let ring = 1; ring <= 40; ring += 1) {
-      const distance = ring * (radius * 2 + 1.2)
-      const steps = 12
+    for (let ring = 1; ring <= 48; ring += 1) {
+      const distance = ring * Math.max(0.6, radius * 2 + 1.2)
+      const steps = ring > 10 ? 24 : 12
 
       for (let step = 0; step < steps; step += 1) {
         const angle = (step / steps) * Math.PI * 2 + ring * 0.5
-        const px = x + Math.cos(angle) * distance
-        const py = y + Math.sin(angle) * distance
+        let px = x + Math.cos(angle) * distance
+        let py = y + Math.sin(angle) * distance
+
+        // Slide back to the frame edge instead of discarding an off-screen ring.
+        const offset = Math.hypot(px, py)
+        if (offset > frameEdge) {
+          px *= frameEdge / offset
+          py *= frameEdge / offset
+        }
+
         if (fits(px, py)) return { x: px, y: py }
       }
     }
@@ -130,6 +148,14 @@ export class Sim {
       )
       vx = nearest.vx - dy * orbitSpeed * direction
       vy = nearest.vy + dx * orbitSpeed * direction
+
+      // A fast-moving neighbour should not fling the arrival off screen.
+      const speedLimit = SEED_SPEED_CAP * 1.5
+      const total = Math.hypot(vx, vy)
+      if (total > speedLimit) {
+        vx = (vx / total) * speedLimit
+        vy = (vy / total) * speedLimit
+      }
     }
 
     const body = this.make({

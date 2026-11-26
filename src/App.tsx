@@ -236,7 +236,7 @@ function SizeFix() {
 }
 
 /** Pulls the camera back far enough that the whole system fits the viewport. */
-function FitView() {
+function FitView({ sim }: { sim: Sim }) {
   const camera = useThree((state) => state.camera)
   const size = useThree((state) => state.size)
   const controls = useThree((state) => state.controls) as unknown as
@@ -255,7 +255,10 @@ function FitView() {
     perspective.position.z = distance
     perspective.updateProjectionMatrix()
     controls?.update?.()
-  }, [camera, size, controls])
+
+    // Tell the simulation how far a spawn may travel before leaving the frame.
+    sim.viewRadius = 0.95 * Math.min(distance * Math.tan(halfFov), distance * Math.tan(halfFov) * aspect)
+  }, [camera, size, controls, sim])
 
   return null
 }
@@ -475,7 +478,7 @@ export default function App() {
             autoRotate={autoRotate}
             autoRotateSpeed={0.4}
           />
-          <FitView />
+          <FitView sim={sim} />
         </Canvas>
       </div>
 

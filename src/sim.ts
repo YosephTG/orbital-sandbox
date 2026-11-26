@@ -58,17 +58,19 @@ export class Sim {
    * landed on top of an existing body never creates a duplicate there.
    */
   private freeSpot(x: number, y: number, radius: number): { x: number; y: number } | null {
-    const margin = 0.35
+    // Generous clearance: a fresh body should read as its own object, not a
+    // bump sitting on whatever it was dropped next to.
+    const clearance = (otherRadius: number) => (otherRadius + radius) * 1.6 + 0.6
     const fits = (px: number, py: number) =>
       this.bodies.every(
-        (body) => Math.hypot(px - body.x, py - body.y) >= body.r + radius + margin,
+        (body) => Math.hypot(px - body.x, py - body.y) >= clearance(body.r),
       )
 
     if (fits(x, y)) return { x, y }
 
     // Walk outward in rings until a clear pocket turns up next to the click.
     for (let ring = 1; ring <= 40; ring += 1) {
-      const distance = ring * (radius + margin + 0.4)
+      const distance = ring * (radius * 2 + 1.2)
       const steps = 12
 
       for (let step = 0; step < steps; step += 1) {
@@ -86,14 +88,30 @@ export class Sim {
     const spot = this.freeSpot(x, y, radiusFor(mass))
     if (!spot) return null
 
-    const angle = Math.random() * Math.PI * 2
-    const speed = 0.12 + Math.random() * 0.45
+    // Leave with a small outward push away from the closest neighbour, so the
+    // new body visibly separates instead of dropping straight into it.
+    let nearest: Body | null = null
+    let nearestDistance = Infinity
+    for (const body of this.bodies) {
+      const distance = Math.hypot(spot.x - body.x, spot.y - body.y)
+      if (distance < nearestDistance) {
+        nearest = body
+        nearestDistance = distance
+      }
+    }
+
+    const awayAngle =
+      nearest && nearestDistance > 0.001
+        ? Math.atan2(spot.y - nearest.y, spot.x - nearest.x)
+        : Math.random() * Math.PI * 2
+    const heading = awayAngle + (Math.random() - 0.5) * 0.5
+    const speed = 1.15 + Math.sqrt(mass) * 0.55
     const color = PALETTE[Math.floor(Math.random() * PALETTE.length)]
     const body = this.make({
       x: spot.x,
       y: spot.y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
+      vx: Math.cos(heading) * speed,
+      vy: Math.sin(heading) * speed,
       m: mass,
       color,
     })

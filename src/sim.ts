@@ -100,18 +100,28 @@ export class Sim {
       }
     }
 
-    const awayAngle =
-      nearest && nearestDistance > 0.001
-        ? Math.atan2(spot.y - nearest.y, spot.x - nearest.x)
-        : Math.random() * Math.PI * 2
-    const heading = awayAngle + (Math.random() - 0.5) * 0.5
-    const speed = 1.15 + Math.sqrt(mass) * 0.55
     const color = PALETTE[Math.floor(Math.random() * PALETTE.length)]
+
+    let vx = (Math.random() - 0.5) * 0.6
+    let vy = (Math.random() - 0.5) * 0.6
+
+    if (nearest && nearestDistance > 0.001) {
+      const dx = (spot.x - nearest.x) / nearestDistance
+      const dy = (spot.y - nearest.y) / nearestDistance
+      const direction = Math.random() < 0.5 ? -1 : 1
+      // Relative circular speed for this pair: the arrival swings around its
+      // neighbour instead of dropping straight onto it and merging.
+      const orbitSpeed =
+        Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance) * 0.9
+      vx = nearest.vx - dy * orbitSpeed * direction
+      vy = nearest.vy + dx * orbitSpeed * direction
+    }
+
     const body = this.make({
       x: spot.x,
       y: spot.y,
-      vx: Math.cos(heading) * speed,
-      vy: Math.sin(heading) * speed,
+      vx,
+      vy,
       m: mass,
       color,
     })

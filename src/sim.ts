@@ -119,15 +119,20 @@ export class Sim {
     const spot = this.freeSpot(x, y, radiusFor(mass), mass)
     if (!spot) return null
 
-    // Leave with a small outward push away from the closest neighbour, so the
-    // new body visibly separates instead of dropping straight into it.
+    // Orbit around whichever body actually pulls hardest here. Using the closest
+    // body instead would seed a slow dance around a light planet that the heavy
+    // one immediately drags the arrival away from.
     let nearest: Body | null = null
-    let nearestDistance = Infinity
+    let nearestDistance = 0
+    let strongestPull = 0
     for (const body of this.bodies) {
       const distance = Math.hypot(spot.x - body.x, spot.y - body.y)
-      if (distance < nearestDistance) {
+      if (distance < 0.001) continue
+      const pull = body.m / (distance * distance)
+      if (pull > strongestPull) {
         nearest = body
         nearestDistance = distance
+        strongestPull = pull
       }
     }
 
@@ -140,22 +145,27 @@ export class Sim {
       const dx = (spot.x - nearest.x) / nearestDistance
       const dy = (spot.y - nearest.y) / nearestDistance
       const direction = Math.random() < 0.5 ? -1 : 1
-      // Relative circular speed for this pair: the arrival swings around its
-      // neighbour instead of dropping straight onto it and merging.
-      const orbitSpeed = Math.min(
-        SEED_SPEED_CAP,
-        Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance) * 0.9,
-      )
-      vx = nearest.vx - dy * orbitSpeed * direction
-      vy = nearest.vy + dx * orbitSpeed * direction
+      // Relative circular speed for this pair. The clearance above already keeps
+      // this near the cap where the frame has room; when the frame is what limits
+      // the clearance, a capped speed would be far below circular and the arrival
+      // would dive into the neighbour, so the true circular speed wins there.
+      const circular = Math.sqrt((this.gravity * (mass + nearest.m)) / nearestDistance)
+      // When the frame is what cut the clearance short, a capped speed would sit
+      // far below circular and the arrival would dive in, so go nearly circular.
+      const roomWanted =
+        (this.gravity * (mass + nearest.m) * 0.81) / (SEED_SPEED_CAP * SEED_SPEED_CAP)
+      const frameLimited = nearestDistance < roomWanted - 0.05
+      const orbitSpeed = frameLimited ? circular : Math.min(SEED_SPEED_CAP, circular * 0.9)
 
-      // A fast-moving neighbour should not fling the arrival off screen.
-      const speedLimit = SEED_SPEED_CAP * 1.5
-      const total = Math.hypot(vx, vy)
-      if (total > speedLimit) {
-        vx = (vx / total) * speedLimit
-        vy = (vy / total) * speedLimit
-      }
+      // A fast-moving neighbour should not fling the arrival off screen, but the
+      // clamp must never eat into the orbit speed itself.
+      const speedLimit = Math.max(SEED_SPEED_CAP * 1.5, orbitSpeed * 1.2)
+      const neighbourSpeed = Math.hypot(nearest.vx, nearest.vy)
+      const neighbourScale =
+        neighbourSpeed > speedLimit ? speedLimit / neighbourSpeed : 1
+
+      vx = nearest.vx * neighbourScale - dy * orbitSpeed * direction
+      vy = nearest.vy * neighbourScale + dx * orbitSpeed * direction
     }
 
     const body = this.make({
